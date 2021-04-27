@@ -51,34 +51,48 @@ const CityPage = ({ tweets, resources, cities, city, resource }) => {
  * @type {import("next").GetStaticProps<{}, { slug: Array<string> }>}
  */
 export const getStaticProps = async (ctx) => {
-  const { connectToDatabase } = require("../lib/mongo")
-  const TweetModel = require("../schemas/tweet")
+  const fs = require("fs")
+  const path = require("path")
+  const { getAllTweets, fetchFirstTime } = require("../lib/db")
   const cities = Object.keys(require("seeds/cities.json"))
   const resources = Object.keys(require("seeds/resources.json"))
-  const fs = require("fs")
   const { slug } = ctx.params
   let slug0type = "city"
-
+  const tweetsPath = path.resolve(process.cwd(), "tweets.json")
+  const lockPath = path.resolve(process.cwd(), "tweets-lock.json")
   /** @type {Object[]} */
-  let tweets;
-  console.log("Running ISR for [...slug].jsx...")
+  let tweets
 
-  if(fs.existsSync("tweets.json")) {
-    console.log("tweet.json found.")
-    tweets = JSON.parse(fs.readFileSync("tweets.json", "utf8"))
+  if (fs.existsSync(lockPath)) {
+    console.log("Lockfile exists")
+    const { time } = JSON.parse(
+      fs.readFileSync(lockPath, { encoding: "utf-8" })
+    )
+    if (fs.existsSync(tweetsPath)) {
+      const fetchTime = new Date(time)
+      const currentTime = new Date()
+      const diff = currentTime - fetchTime
+      console.log("Tweets file exists")
+      if (diff / 1e3 >= 300) {
+        console.log("Tweets are older than 5 minutes")
+        fs.unlinkSync(tweetsPath)
+        tweets = await getAllTweets()
+        const lockFileData = JSON.stringify({ time: new Date().toISOString() })
+        fs.writeFileSync(lockPath, lockFileData, { encoding: "utf-8" })
+        fs.writeFileSync(tweetsPath, JSON.stringify(tweets, null, 4), {
+          encoding: "utf-8",
+        })
+      } else {
+        console.log("Reading tweets from fs")
+        tweets = JSON.parse(fs.readFileSync(tweetsPath, { encoding: "utf-8" }))
+      }
+    } else {
+      await fetchFirstTime()
+    }
   } else {
-    console.log("tweet.json not found. Reading from the database.")
-    await connectToDatabase()
-    tweets = await TweetModel.find({})
-
-    tweets = tweets.map((item) => {
-      const { _id, __v, createdAt, updatedAt, ...doc } = item._doc
-      return doc
-    })
-
-    fs.writeFileSync("tweets.json", JSON.stringify(tweets))
+    await fetchFirstTime()
   }
- 
+
   // /city route
   if (slug.length === 1) {
     if (cities.map((i) => i.toLowerCase()).includes(slug[0])) {
@@ -131,10 +145,12 @@ export const getStaticProps = async (ctx) => {
  * @type {import("next").GetStaticPaths}
  */
 export const getStaticPaths = async () => {
-  const { connectToDatabase } = require("../lib/mongo")
   const resources = Object.keys(require("seeds/resources.json"))
   const cities = Object.keys(require("seeds/cities.json"))
   const paths = []
+  const { fetchFirstTime } = require("../lib/db")
+
+  await fetchFirstTime()
 
   paths.push({ params: { slug: ["/"] } })
 

@@ -1,5 +1,8 @@
+const fs = require("fs")
+const path = require("path")
 const { connectToDatabase } = require("./mongo")
 const TweetModel = require("../schemas/tweet")
+const { scrape } = require("./scrape")
 
 /**
  * @param {string} city
@@ -42,7 +45,7 @@ module.exports.statusDownvote = async (tweetId) => {
   )
 }
 
-module.exports.getTweets = async (city, resource) => {
+const getTweets = async (city, resource) => {
   await connectToDatabase()
   const query = {}
   if (typeof city === "string" && typeof resource === "string") {
@@ -65,10 +68,12 @@ module.exports.getTweets = async (city, resource) => {
   })
 }
 
-module.exports.getAllTweets = async () => {
-  await connectToDatabase()
-  const result = await TweetModel.find({})
-  return result.map((item) => {
+const getAllTweets = async (toScrape = true) => {
+  const conn = await connectToDatabase()
+  if (toScrape) await scrape()
+  const tweets = await TweetModel.find({})
+  await conn.disconnect()
+  return tweets.map((item) => {
     const { _id, __v, createdAt, updatedAt, ...doc } = item._doc
     return doc
   })
@@ -78,3 +83,19 @@ module.exports.getCityResources = async () => {
   //return (await store.doc("main/city_resources").get()).data()
   return {}
 }
+
+const fetchFirstTime = async () => {
+  const tweetsPath = path.resolve(process.cwd(), "tweets.json")
+  const lockPath = path.resolve(process.cwd(), "tweets-lock.json")
+  const lockFileData = JSON.stringify({ time: new Date().toISOString() })
+  fs.writeFileSync(lockPath, lockFileData, { encoding: "utf-8" })
+  const tweets = await getAllTweets()
+  fs.writeFileSync(tweetsPath, JSON.stringify(tweets, null, 4), {
+    encoding: "utf-8",
+  })
+  return tweets
+}
+
+module.exports.fetchFirstTime = fetchFirstTime
+module.exports.getAllTweets = getAllTweets
+module.exports.getTweets = getTweets
